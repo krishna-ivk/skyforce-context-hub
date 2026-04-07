@@ -3,12 +3,14 @@ import cors from "cors";
 import morgan from "morgan";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promises as fs } from "node:fs";
 
 // Load the core context provider
 import { RepoDocContextProvider } from "../../skyforce-core/lib/context/repo-doc-context-provider.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = path.resolve(__dirname, "../../");
+const SUMMARIES_DIR = path.join(WORKSPACE_ROOT, "morphOS", "memory", "operational_summaries");
 
 const app = express();
 app.use(cors());
@@ -179,6 +181,110 @@ app.post("/api/context/:context_id/annotations", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Compress Context — synthesize run history into operational summary
+app.post("/api/context/compress", async (req, res) => {
+  const { run_id, issue_identifier, workspace_id, run_artifacts } = req.body;
+
+  if (!run_id || !issue_identifier) {
+    return res.status(400).json({ error: "run_id and issue_identifier are required" });
+  }
+
+  await fs.mkdir(SUMMARIES_DIR, { recursive: true });
+
+  const summary = {
+    summary_id: `summary:${issue_identifier}:${run_id}`,
+    run_id,
+    issue_identifier,
+    workspace_id,
+    created_at: new Date().toISOString(),
+    phase: "operational",
+    artifact_count: run_artifacts ? Object.keys(run_artifacts).length : 0,
+    artifacts: run_artifacts || {},
+    key_decisions: extractKeyDecisions(run_artifacts),
+    warnings: extractWarnings(run_artifacts),
+    patterns: extractPatterns(run_artifacts),
+  };
+
+  const summaryPath = path.join(SUMMARIES_DIR, `${issue_identifier}-${run_id}.json`);
+  await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2) + "\n");
+
+  res.status(201).json({ message: "Operational summary created", summary_id: summary.summary_id });
+});
+
+// Get Operational Summary
+app.get("/api/context/summary/:summary_id", async (req, res) => {
+  const { summary_id } = req.params;
+  const parts = summary_id.replace("summary:", "").split(":");
+  const issueIdentifier = parts[0];
+  const runId = parts[1];
+
+  const summaryPath = path.join(SUMMARIES_DIR, `${issueIdentifier}-${runId}.json`);
+
+  try {
+    const content = await fs.readFile(summaryPath, "utf8");
+    res.json({ summary: JSON.parse(content) });
+  } catch {
+    res.status(404).json({ error: "Summary not found" });
+  }
+});
+
+// List Operational Summaries
+app.get("/api/context/summaries", async (req, res) => {
+  const { issue_identifier } = req.query;
+
+  try {
+    const files = await fs.readdir(SUMMARIES_DIR);
+    let summaries = [];
+
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      if (issue_identifier && !file.startsWith(issue_identifier)) continue;
+
+      const content = await fs.readFile(path.join(SUMMARIES_DIR, file), "utf8");
+      summaries.push(JSON.parse(content));
+    }
+
+    summaries.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    res.json({ count: summaries.length, summaries });
+  } catch {
+    res.json({ count: 0, summaries: [] });
+  }
+});
+
+function extractKeyDecisions(artifacts) {
+  if (!artifacts) return [];
+  const decisions = [];
+  for (const [key, value] of Object.entries(artifacts)) {
+    if (key.includes("decision") || key.includes("plan")) {
+      decisions.push({ source: key, content: typeof value === "string" ? value : JSON.stringify(value).slice(0, 200) });
+    }
+  }
+  return decisions;
+}
+
+function extractWarnings(artifacts) {
+  if (!artifacts) return [];
+  const warnings = [];
+  for (const [key, value] of Object.entries(artifacts)) {
+    if (key.includes("error") || key.includes("warning") || key.includes("failure")) {
+      warnings.push({ source: key, content: typeof value === "string" ? value : JSON.stringify(value).slice(0, 200) });
+    }
+  }
+  return warnings;
+}
+
+function extractPatterns(artifacts) {
+  if (!artifacts) return [];
+  const patterns = [];
+  if (artifacts?.test_results?.overall_result === "pass") {
+    patterns.push("tests_passed_on_first_run");
+  }
+  if (artifacts?.validation_receipt?.status === "completed") {
+    patterns.push("validation_completed_successfully");
+  }
+  return patterns;
+}
 
 const PORT = 3005;
 app.listen(PORT, () => {
