@@ -1,0 +1,17 @@
+{
+  "name": "skyforce-context-hub",
+  "version": "1.0.0",
+  "description": "MorphOS Software Factory Context Hub Service (P2 Maturity)",
+  "main": "src/server.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0"
+  }
+}
