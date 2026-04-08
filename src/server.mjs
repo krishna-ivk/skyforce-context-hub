@@ -11,21 +11,34 @@ import { RepoDocContextProvider } from "../../skyforce-core/lib/context/repo-doc
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = path.resolve(__dirname, "../../");
 const SUMMARIES_DIR = path.join(WORKSPACE_ROOT, "morphOS", "memory", "operational_summaries");
+const DEFAULT_REPOS = [
+  "morphOS",
+  "skyforce-core",
+  "skyforce-symphony",
+  "skyforce-harness",
+  "skyforce-api-gateway",
+  "skyforce-command-centre-live",
+  "skyforce-command-centre"
+];
 
 const app = express();
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
 
-// Registry of supported repositories
-const REPOS = [
-  "morphOS",
-  "skyforce-core",
-  "skyforce-symphony",
-  "skyforce-harness",
-  "skyforce-api-gateway",
-  "skyforce-command-centre"
-];
+function configuredRepos() {
+  const raw = process.env.SKYFORCE_CONTEXT_HUB_REPOS;
+  if (!raw || raw.trim() === "") {
+    return DEFAULT_REPOS;
+  }
+
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+const REPOS = configuredRepos();
 
 // Context Providers Cache
 const providers = new Map();
@@ -51,6 +64,14 @@ function getProvider(repoName) {
 // Health Check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "skyforce-context-hub", version: "1.0.0" });
+});
+
+// Supported Repos
+app.get("/api/context/repos", (req, res) => {
+  res.json({
+    count: REPOS.length,
+    repos: REPOS
+  });
 });
 
 // Search Context
